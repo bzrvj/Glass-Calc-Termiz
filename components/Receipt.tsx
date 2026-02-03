@@ -69,9 +69,6 @@ const Receipt: React.FC<ReceiptProps> = ({ order }) => {
             <div className="flex justify-between text-[9px] font-bold">
               <span>Sof: {baseArea.toFixed(3)} m²</span>
             </div>
-            <div className="flex justify-between text-[9px] font-bold text-gray-600">
-              <span>Atxot ({order.wastePercent}%): {wasteArea.toFixed(3)}</span>
-            </div>
             <div className="flex justify-between text-[11px] font-black border-t border-black pt-0.5">
               <span>JAMI: {order.totalArea.toFixed(3)} m²</span>
             </div>

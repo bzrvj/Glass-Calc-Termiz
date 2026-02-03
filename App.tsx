@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Calculator as CalcIcon, 
@@ -20,14 +19,16 @@ import {
   CheckCircle2,
   Trash,
   Download,
-  AlertCircle
+  AlertCircle,
+  Settings,
+  Edit2,
+  Save as SaveIcon
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { GlassType, OrderItem, SavedOrder, ActiveInput } from './types';
-import { INITIAL_GLASS_TYPES, ROUNDING_PRECISION, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, ORDER_PASSWORD } from './constants';
+import { ROUNDING_PRECISION, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, ORDER_PASSWORD, DEFAULT_GLASS_TYPES } from './constants';
 import Keypad from './components/Keypad';
-// Import Receipt component for printing
 import Receipt from './components/Receipt';
 
 const Logo = ({ className = "w-10 h-10" }: { className?: string }) => (
@@ -46,8 +47,9 @@ const App: React.FC = () => {
   const [pinInput, setPinInput] = useState<string>('');
   const [isSending, setIsSending] = useState<boolean>(false);
 
-  const [catalog] = useState<GlassType[]>(INITIAL_GLASS_TYPES);
-  const [currentGlass, setCurrentGlass] = useState<GlassType>(INITIAL_GLASS_TYPES[0]);
+  // Local Storage-dan shisha turlarini yuklash
+  const [catalog, setCatalog] = useState<GlassType[]>([]);
+  const [currentGlass, setCurrentGlass] = useState<GlassType | null>(null);
   const [height, setHeight] = useState<string>('0');
   const [width, setWidth] = useState<string>('0');
   const [quantity, setQuantity] = useState<string>('0');
@@ -56,19 +58,86 @@ const App: React.FC = () => {
   const [customerName, setCustomerName] = useState<string>('');
   const [currentItems, setCurrentItems] = useState<OrderItem[]>([]);
   const [archive, setArchive] = useState<SavedOrder[]>([]);
-  const [view, setView] = useState<'calc' | 'archive'>('calc');
+  const [view, setView] = useState<'calc' | 'archive' | 'settings'>('calc');
   const [addedAnimation, setAddedAnimation] = useState(false);
   const [printOrder, setPrintOrder] = useState<SavedOrder | null>(null);
 
-  // Mandatory waste percent fixed at 3%
+  // Settings modal
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [editingGlass, setEditingGlass] = useState<GlassType | null>(null);
+  const [newGlassName, setNewGlassName] = useState('');
+  const [newGlassPrice, setNewGlassPrice] = useState('');
+
   const wastePercent = 3;
 
+  // LOCAL STORAGE-DAN YUKLASH
   useEffect(() => {
-    const saved = localStorage.getItem('glass_calc_archive');
+    const saved = localStorage.getItem('glass_types');
     if (saved) {
-      try { setArchive(JSON.parse(saved)); } catch (e) { console.error(e); }
+      try {
+        const loaded = JSON.parse(saved);
+        setCatalog(loaded);
+        if (loaded.length > 0) setCurrentGlass(loaded[0]);
+      } catch (e) {
+        loadDefaultGlasses();
+      }
+    } else {
+      loadDefaultGlasses();
+    }
+
+    const savedArchive = localStorage.getItem('glass_calc_archive');
+    if (savedArchive) {
+      try { setArchive(JSON.parse(savedArchive)); } catch (e) { console.error(e); }
     }
   }, []);
+
+  const loadDefaultGlasses = () => {
+    const defaults = DEFAULT_GLASS_TYPES;
+    setCatalog(defaults);
+    setCurrentGlass(defaults[0]);
+    localStorage.setItem('glass_types', JSON.stringify(defaults));
+  };
+
+  // NARX O'ZGARTIRISH
+  const updateGlassPrice = (id: string, newPrice: number) => {
+    const updated = catalog.map(g => 
+      g.id === id ? { ...g, pricePerM2: newPrice } : g
+    );
+    setCatalog(updated);
+    localStorage.setItem('glass_types', JSON.stringify(updated));
+    if (currentGlass?.id === id) {
+      setCurrentGlass({ ...currentGlass, pricePerM2: newPrice });
+    }
+  };
+
+  // SHISHA TURI QO'SHISH
+  const addNewGlassType = () => {
+    if (!newGlassName.trim() || !newGlassPrice.trim()) return;
+    
+    const newGlass: GlassType = {
+      id: Math.random().toString(36).substr(2, 9),
+      name: newGlassName,
+      pricePerM2: parseInt(newGlassPrice),
+      colorClass: 'bg-indigo-400',
+      textColor: 'text-indigo-800'
+    };
+    
+    const updated = [...catalog, newGlass];
+    setCatalog(updated);
+    localStorage.setItem('glass_types', JSON.stringify(updated));
+    setNewGlassName('');
+    setNewGlassPrice('');
+  };
+
+  // SHISHA TURINI O'CHIRISH
+  const deleteGlassType = (id: string) => {
+    const updated = catalog.filter(g => g.id !== id);
+    setCatalog(updated);
+    localStorage.setItem('glass_types', JSON.stringify(updated));
+    if (currentGlass?.id === id && updated.length > 0) {
+      setCurrentGlass(updated[0]);
+    }
+  };
 
   const handleKeyPress = useCallback((key: string) => {
     const setter = activeInput === 'height' ? setHeight : activeInput === 'width' ? setWidth : setQuantity;
@@ -86,6 +155,7 @@ const App: React.FC = () => {
   }, [activeInput]);
 
   const addItem = useCallback(() => {
+    if (!currentGlass) return;
     const h = parseFloat(height);
     const w = parseFloat(width);
     const q = parseInt(quantity);
@@ -158,13 +228,6 @@ const App: React.FC = () => {
     }
   };
 
-  const printInvoice = (order: SavedOrder) => {
-    setPrintOrder(order);
-    setTimeout(() => {
-      window.print();
-    }, 100);
-  };
-
   const generateReceiptHTML = (order: SavedOrder) => {
     const date = new Date(order.timestamp).toLocaleString('uz-UZ');
     const grouped = order.items.reduce((acc, item) => {
@@ -215,17 +278,11 @@ const App: React.FC = () => {
              <span style="font-size: 18px; font-weight: 900; color: #000;">Sof yuza:</span>
              <span style="font-size: 18px; font-weight: 900;">${baseArea.toFixed(3)} m²</span>
           </div>
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: #dc2626;">
-             <span style="font-size: 18px; font-weight: 900;">Atxot (+${order.wastePercent}%):</span>
-             <span style="font-size: 18px; font-weight: 900;">+${(baseArea * order.wastePercent / 100).toFixed(3)} m²</span>
-          </div>
           <div style="display: flex; justify-content: space-between; align-items: baseline; border-top: 4px solid #000; margin-top: 15px; padding-top: 15px;">
             <span style="font-size: 20px; font-weight: 900; color: #000; text-transform: uppercase;">JAMI TO'LOV:</span>
             <span style="font-size: 64px; font-weight: 900; color: #4f46e5; letter-spacing: -3px;">${Math.round(order.totalAmount).toLocaleString()} <small style="font-size: 24px; color: #000;">SO'M</small></span>
           </div>
         </div>
-        
-        
       </div>
     `;
   };
@@ -309,8 +366,8 @@ const App: React.FC = () => {
       id: Math.random().toString(36).substr(2, 9),
       timestamp: Date.now(),
       items: [...currentItems],
-      totalAmount: baseAmount * (1 + wastePercent / 100),
-      totalArea: baseArea * (1 + wastePercent / 100),
+      totalAmount: baseAmount, // Atxot qo'shilmaydi
+      totalArea: baseArea, // Atxot qo'shilmaydi
       wastePercent,
       customerName
     };
@@ -323,8 +380,10 @@ const App: React.FC = () => {
 
   const baseAmount = currentItems.reduce((acc, item) => acc + item.totalPrice, 0);
   const baseArea = currentItems.reduce((acc, item) => acc + item.areaM2, 0);
-  const totalAmount = baseAmount * (1 + wastePercent / 100);
-  const totalArea = baseArea * (1 + wastePercent / 100);
+  const totalAmount = baseAmount; // Atxot qo'shilmaydi
+  const totalArea = baseArea; // Atxot qo'shilmaydi
+
+  if (!currentGlass) return <div>Yuklanmoqda...</div>;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-mono text-slate-900 overflow-x-hidden">
@@ -347,6 +406,13 @@ const App: React.FC = () => {
             <History className="w-6 h-6" />
             <span className="text-[10px] font-bold uppercase tracking-tighter">Arxiv</span>
           </button>
+          <button 
+            onClick={() => setView('settings')}
+            className={`p-3 rounded-2xl transition-all duration-300 flex flex-col items-center gap-1 ${view === 'settings' ? 'bg-indigo-600 shadow-lg shadow-indigo-500/40' : 'text-slate-500 hover:text-cyan-400'}`}
+          >
+            <Settings className="w-6 h-6" />
+            <span className="text-[10px] font-bold uppercase tracking-tighter">Sozla</span>
+          </button>
         </div>
       </nav>
 
@@ -355,7 +421,7 @@ const App: React.FC = () => {
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
             <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
-                <h1 className="text-3xl font-black tracking-tighter text-indigo-950 uppercase leading-none">Javlonbek-Jonibek O/K</h1>
+                <h1 className="text-3xl font-black tracking-tighter text-indigo-950 uppercase leading-none">Glass Calculator</h1>
                 <p className="text-xs font-bold text-cyan-600 uppercase tracking-widest mt-1">Oyna Kesish Xizmati</p>
               </div>
               <div className="bg-white px-4 py-2 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
@@ -382,6 +448,7 @@ const App: React.FC = () => {
                   >
                     <div className={`w-10 h-10 rounded-xl mb-2 mx-auto ${g.colorClass} border border-white shadow-sm transition-transform group-hover:scale-110`} />
                     <div className="text-[10px] font-black uppercase text-center whitespace-nowrap">{g.name}</div>
+                    <div className="text-[8px] text-slate-500 text-center mt-1">{g.pricePerM2.toLocaleString()}</div>
                   </button>
                 ))}
               </div>
@@ -475,16 +542,6 @@ const App: React.FC = () => {
                     )}
                   </div>
 
-                  <div className="p-6 bg-red-50 border-t border-red-100">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <AlertCircle className="w-4 h-4 text-red-500" />
-                        <span className="text-[10px] font-black text-red-600 uppercase tracking-widest">Majburiy Atxot</span>
-                      </div>
-                      <span className="bg-red-600 text-white text-xs font-black px-3 py-1 rounded-full">{wastePercent}%</span>
-                    </div>
-                  </div>
-
                   <div className="p-6 md:p-8 bg-white border-t-2 border-slate-200 space-y-4">
                     <div className="space-y-1">
                       <div className="flex justify-between items-center px-2 opacity-50">
@@ -527,7 +584,7 @@ const App: React.FC = () => {
               </aside>
             </div>
           </div>
-        ) : (
+        ) : view === 'archive' ? (
           <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
             <header className="flex justify-between items-center bg-white p-6 md:p-10 rounded-[2.5rem] shadow-sm border border-slate-100">
               <div className="flex items-center gap-4">
@@ -559,7 +616,6 @@ const App: React.FC = () => {
                           <Download className="w-5 h-5" />
                           <span className="text-[8px] font-black uppercase">Rasm yuklash</span>
                         </button>
-                        
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4 border-t-2 border-slate-100 pt-8">
@@ -575,6 +631,89 @@ const App: React.FC = () => {
                   </div>
                 ))
               )}
+            </div>
+          </div>
+        ) : (
+          // SETTINGS VIEW
+          <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500 pb-20">
+            <header className="flex items-center gap-4 bg-white p-6 md:p-10 rounded-[2.5rem] shadow-sm border border-slate-100">
+              <div className="p-4 bg-indigo-600 rounded-2xl text-white shadow-lg"><Settings className="w-8 h-8" /></div>
+              <h2 className="text-2xl md:text-3xl font-black tracking-tighter uppercase text-indigo-950 leading-none">Oyna Narxlarini Boshqarish</h2>
+            </header>
+
+            <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-sm border border-slate-100 space-y-6">
+              <h3 className="text-lg font-black uppercase text-slate-800 flex items-center gap-2">
+                <Plus className="w-5 h-5 text-cyan-500" /> Yangi Shisha Turi Qo'shish
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <input 
+                  type="text" 
+                  placeholder="Shisha nomi (masalan: Oq 8mm)" 
+                  value={newGlassName}
+                  onChange={e => setNewGlassName(e.target.value)}
+                  className="px-6 py-4 bg-slate-50 rounded-2xl border-2 border-transparent focus:border-indigo-600 outline-none font-black text-sm"
+                />
+                <input 
+                  type="number" 
+                  placeholder="Narx (so'm/m²)" 
+                  value={newGlassPrice}
+                  onChange={e => setNewGlassPrice(e.target.value)}
+                  className="px-6 py-4 bg-slate-50 rounded-2xl border-2 border-transparent focus:border-indigo-600 outline-none font-black text-sm"
+                />
+                <button 
+                  onClick={addNewGlassType}
+                  className="px-6 py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm hover:bg-indigo-700 transition-colors shadow-lg flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-4 h-4" /> QO'SHISH
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-sm border border-slate-100 space-y-6">
+              <h3 className="text-lg font-black uppercase text-slate-800 flex items-center gap-2">
+                <Edit2 className="w-5 h-5 text-cyan-500" /> Mavjud Shisha Turlari
+              </h3>
+              <div className="space-y-4">
+                {catalog.map(glass => (
+                  <div key={glass.id} className="flex flex-col md:flex-row items-start md:items-center gap-4 p-6 bg-slate-50 rounded-2xl border-2 border-slate-100 hover:border-indigo-200 transition-all">
+                    <div className={`w-12 h-12 rounded-xl ${glass.colorClass} border border-white shadow-md flex-shrink-0`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-black text-slate-800">{glass.name}</p>
+                      <p className="text-sm text-slate-500">Hozirgi narx: {glass.pricePerM2.toLocaleString()} so'm/m²</p>
+                    </div>
+                    <div className="flex gap-3 w-full md:w-auto">
+                      <input 
+                        type="number" 
+                        defaultValue={glass.pricePerM2}
+                        onBlur={(e) => {
+                          const newPrice = parseInt(e.target.value);
+                          if (newPrice > 0) {
+                            updateGlassPrice(glass.id, newPrice);
+                          }
+                        }}
+                        className="px-4 py-3 bg-white rounded-xl border-2 border-slate-200 focus:border-indigo-600 outline-none font-black text-sm w-full md:w-32"
+                        placeholder="Yangi narx"
+                      />
+                      <button 
+                        onClick={() => deleteGlassType(glass.id)}
+                        className="px-4 py-3 bg-red-50 text-red-600 rounded-xl hover:bg-red-600 hover:text-white transition-colors font-black text-sm flex items-center gap-2 flex-shrink-0"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-blue-50 border-2 border-blue-200 rounded-[2.5rem] p-6 md:p-10 space-y-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-6 h-6 text-blue-600 flex-shrink-0 mt-1" />
+                <div>
+                  <h4 className="font-black text-blue-900 uppercase mb-2">Ma'lumot</h4>
+                  <p className="text-sm text-blue-800">Barcha o'zgartirishlar avtomatik ravishda brauzer xotira (Local Storage)da saqlanadi. Buyurtma yaratilganda, hozirgi narxlar ishlatiladi.</p>
+                </div>
+              </div>
             </div>
           </div>
         )}
